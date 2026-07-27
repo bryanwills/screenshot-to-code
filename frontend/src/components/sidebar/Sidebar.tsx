@@ -66,10 +66,11 @@ function getSelectedElementTag(commit: Commit | null): string | null {
   return extractTagName(html);
 }
 
-function isSlowGeminiModel(model?: string): boolean {
+function isSlowModel(model?: string): boolean {
   return (
     model === CodeGenerationModel.GEMINI_3_1_PRO_PREVIEW_HIGH ||
-    model === CodeGenerationModel.GEMINI_3_1_PRO_PREVIEW_MEDIUM
+    model === CodeGenerationModel.GEMINI_3_1_PRO_PREVIEW_MEDIUM ||
+    model === CodeGenerationModel.GPT_5_6_SOL_MAX
   );
 }
 
@@ -412,7 +413,7 @@ function Sidebar({
           head === latestCommitHash &&
           !isSelectedVariantComplete &&
           !isSelectedVariantError &&
-          isSlowGeminiModel(selectedVariant?.model) && (
+          isSlowModel(selectedVariant?.model) && (
           <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
             Slow, high quality model. May take 5-10 mins on some images/videos.
           </div>
