@@ -23,10 +23,14 @@ ALL_KEYS_MODELS_DEFAULT = (
 
 # Text (Create)
 
+# Refreshed 2026-07-27 from the "Text evals v1" session (8 briefs x 7
+# models): sol high and opus 5 high replace gpt-5.5 high and opus 4.8 high
+# at similar cost/latency; 3-flash minimal keeps the fast slot (48s median,
+# $0.05/brief) and 3.1-pro low stays for now.
 ALL_KEYS_MODELS_TEXT_CREATE = (
     Llm.GEMINI_3_FLASH_PREVIEW_MINIMAL,
-    Llm.GPT_5_5_HIGH,
-    Llm.CLAUDE_OPUS_4_8_HIGH,
+    Llm.GPT_5_6_SOL_HIGH,
+    Llm.CLAUDE_OPUS_5_HIGH,
     Llm.GEMINI_3_1_PRO_PREVIEW_LOW,
 )
 
