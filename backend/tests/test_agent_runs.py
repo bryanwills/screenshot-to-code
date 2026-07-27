@@ -628,6 +628,41 @@ async def test_eval_runner_does_not_retry_budget_abort(
 
 
 @pytest.mark.asyncio
+async def test_engine_fails_empty_output_runs(
+    logs_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.engine import EmptyOutputError
+    from agent.providers.base import ProviderTurn
+
+    class _NoOutputSession:
+        def total_cost_usd(self) -> Optional[float]:
+            return None
+
+        async def stream_turn(self, on_event: Any) -> Any:
+            # The observed gemini-3.6-flash failure mode: a final turn with
+            # no tool calls and no text at all.
+            return ProviderTurn(assistant_text="", tool_calls=[])
+
+        async def append_tool_results(self, turn: Any, executed: Any) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "agent.engine.create_provider_session", lambda **kwargs: _NoOutputSession()
+    )
+    recorder = _make_recorder()
+    engine = _make_engine(recorder)
+    with pytest.raises(EmptyOutputError):
+        await engine.run(Llm.GPT_5_5_HIGH, [])
+
+    events = _read_events(recorder)
+    assert events[-1]["status"] == "failed"
+    assert "without producing" in events[-1]["error"]
+
+
+@pytest.mark.asyncio
 async def test_engine_records_failed_run_and_reraises(
     logs_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

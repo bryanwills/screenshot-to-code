@@ -22,6 +22,19 @@ from config import GENERATION_MAX_COST_USD
 from fs_logging.agent_runs import AgentRunRecorder
 
 
+class EmptyOutputError(Exception):
+    """Raised when a run finishes without producing any HTML.
+
+    Some models (observed: gemini-3.6-flash) occasionally run asset tools
+    and then stop without calling create_file. Treating that as success
+    poisons evals: the run looks green, diff mode skips it forever, and
+    the output file is empty. Raising makes it a normal, retryable failure.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Generation finished without producing any output.")
+
+
 class BudgetExceededError(Exception):
     """Raised when a single generation exceeds the spend ceiling.
 
@@ -340,6 +353,8 @@ class AgentEngine:
         )
         try:
             result = await self._run_with_session(session)
+            if not result:
+                raise EmptyOutputError()
             if self.recorder is not None:
                 await self.recorder.record_run_end("completed", final_html=result)
             return result

@@ -13,7 +13,9 @@ class NoToolProviderSession:
         self.closed = False
 
     async def stream_turn(self, on_event: EventSink) -> ProviderTurn:
-        return ProviderTurn(assistant_text="", tool_calls=[])
+        # Non-empty output so the engine's EmptyOutputError guard stays quiet;
+        # this test only cares about tool-availability wiring.
+        return ProviderTurn(assistant_text="<html>ok</html>", tool_calls=[])
 
     async def append_tool_results(
         self,
