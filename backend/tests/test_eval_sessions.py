@@ -358,6 +358,45 @@ async def test_session_matrix(logs_path: Path, evals_dir: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_matrix_text_set(
+    logs_path: Path, evals_dir: Path
+) -> None:
+    import json as json_module
+
+    from routes.eval_sets import get_session_matrix
+
+    set_dir = evals_dir / "sets" / "briefs-v1"
+    set_dir.mkdir(parents=True)
+    (set_dir / "briefs.json").write_text(
+        json_module.dumps(
+            {
+                "briefs": [
+                    {"id": "pdp", "title": "PDP", "brief": "Build a product page."},
+                    {"id": "board", "brief": "Build a kanban board."},
+                ]
+            }
+        )
+    )
+    session = create_session("briefs-v1")
+    run = _record_run(
+        eval_session=session.session_id, eval_set="briefs-v1", input_file="pdp"
+    )
+    _set_run_status(run.run_id, "completed")
+
+    matrix = await get_session_matrix(session.session_id)
+    assert not matrix.set_missing
+    assert [(r.filename, r.title) for r in matrix.rows] == [
+        ("pdp", "PDP"),
+        ("board", "board"),
+    ]
+    assert matrix.rows[0].image_url is None
+    assert matrix.rows[0].brief == "Build a product page."
+    cells = {(c.filename, c.model) for c in matrix.cells}
+    assert ("pdp", Llm.GPT_5_5_HIGH.value) in cells
+    assert matrix.unmatched_run_count == 0
+
+
+@pytest.mark.asyncio
 async def test_session_matrix_missing_set(
     logs_path: Path, evals_dir: Path
 ) -> None:

@@ -244,6 +244,12 @@ async def run_evals(request: RunEvalsRequest) -> List[str]:
 
 
 def _count_eval_files(selected_files: List[str], set_name: Optional[str] = None) -> int:
+    if set_name and eval_sets.get_set_kind(set_name) == "text":
+        brief_ids = {b.id for b in eval_sets.list_set_briefs(set_name)}
+        if selected_files:
+            return len([f for f in selected_files if f in brief_ids])
+        return len(brief_ids)
+
     if selected_files:
         return len([f for f in selected_files if f.endswith(".png")])
 

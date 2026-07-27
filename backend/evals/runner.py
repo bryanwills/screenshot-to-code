@@ -8,8 +8,8 @@ from llm import Llm
 from config import LOCAL_ASSET_BASE_URL
 from prompts.prompt_types import Stack
 from agent.engine import BudgetExceededError
-from .core import generate_code_for_image
-from .sets import get_set_inputs_dir
+from .core import generate_code_for_image, generate_code_for_text
+from .sets import get_set_inputs_dir, get_set_kind, list_set_briefs
 from .utils import image_to_data_url
 from .config import EVALS_DIR
 
@@ -52,6 +52,23 @@ def _resolve_eval_filenames(
     return [f for f in os.listdir(input_dir) if f.endswith(".png")]
 
 
+def _resolve_eval_items(
+    input_files: Optional[List[str]], eval_set: Optional[str]
+) -> tuple[List[str], dict[str, str]]:
+    """Items to run and, for text sets, the id -> brief text mapping.
+
+    For image sets items are PNG filenames; for text sets they are brief ids
+    (which play the same role everywhere downstream: skip keys, output file
+    stems, and the run's recorded input_file).
+    """
+    if eval_set and get_set_kind(eval_set) == "text":
+        briefs = list_set_briefs(eval_set)
+        wanted = {os.path.basename(f) for f in input_files} if input_files else None
+        items = [b.id for b in briefs if wanted is None or b.id in wanted]
+        return items, {b.id: b.brief for b in briefs}
+    return _resolve_eval_filenames(input_files, _get_input_dir(eval_set)), {}
+
+
 def _output_html_filename(original_filename: str, attempt_idx: int) -> str:
     return f"{os.path.splitext(original_filename)[0]}_{attempt_idx}.html"
 
@@ -71,7 +88,7 @@ def count_pending_eval_tasks(
     eval_set: Optional[str] = None,
     skip_input_files: Optional[set[str]] = None,
 ) -> Tuple[int, int]:
-    evals = _resolve_eval_filenames(input_files, _get_input_dir(eval_set))
+    evals, _ = _resolve_eval_items(input_files, eval_set)
     if not diff_mode:
         return len(evals) * n, 0
 
@@ -105,6 +122,7 @@ async def generate_code_and_time(
     attempt_idx: int,
     eval_set: Optional[str] = None,
     eval_session_id: Optional[str] = None,
+    brief_text: Optional[str] = None,
 ) -> Tuple[str, int, Optional[str], Optional[float], Optional[Exception], int]:
     """
     Generates code for an image, measures the time taken, and returns identifiers
@@ -117,14 +135,24 @@ async def generate_code_and_time(
     while True:
         start_time = time.perf_counter()
         try:
-            content = await generate_code_for_image(
-                image_url=image_url,
-                stack=stack,
-                model=model,
-                eval_set=eval_set,
-                eval_session_id=eval_session_id,
-                input_file=original_input_filename,
-            )
+            if brief_text is not None:
+                content = await generate_code_for_text(
+                    text_prompt=brief_text,
+                    stack=stack,
+                    model=model,
+                    eval_set=eval_set,
+                    eval_session_id=eval_session_id,
+                    input_file=original_input_filename,
+                )
+            else:
+                content = await generate_code_for_image(
+                    image_url=image_url,
+                    stack=stack,
+                    model=model,
+                    eval_set=eval_set,
+                    eval_session_id=eval_session_id,
+                    input_file=original_input_filename,
+                )
             end_time = time.perf_counter()
             duration = end_time - start_time
             return (
@@ -182,8 +210,9 @@ async def run_image_evals(
     eval_session_id: Optional[str] = None,
     skip_input_files: Optional[set[str]] = None,
 ) -> List[str]:
-    INPUT_DIR = _get_input_dir(eval_set)
-    evals = _resolve_eval_filenames(input_files, INPUT_DIR)
+    evals, briefs_by_id = _resolve_eval_items(input_files, eval_set)
+    is_text_set = bool(briefs_by_id)
+    INPUT_DIR = "" if is_text_set else _get_input_dir(eval_set)
 
     if not stack:
         raise ValueError("No stack was provided")
@@ -238,19 +267,20 @@ async def run_image_evals(
                     skipped_existing_tasks += 1
                     continue
 
-            if data_url is None:
+            if not is_text_set and data_url is None:
                 data_url = await image_to_data_url(filepath)
             current_model_for_task = (
                 selected_model if n_idx == 0 else Llm.GPT_5_5_LOW
             )
             coro = generate_code_and_time(
-                image_url=data_url,
+                image_url=data_url or "",
                 stack=stack,
                 model=current_model_for_task,
                 original_input_filename=original_filename,
                 attempt_idx=n_idx,
                 eval_set=eval_set,
                 eval_session_id=eval_session_id,
+                brief_text=briefs_by_id.get(original_filename),
             )
             task_coroutines.append(coro)
 

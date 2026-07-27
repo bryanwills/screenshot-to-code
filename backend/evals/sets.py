@@ -40,12 +40,23 @@ class EvalSetImage:
 
 
 @dataclass
+class EvalSetBrief:
+    """One text-eval item: the id plays the role a filename plays for images."""
+
+    id: str
+    title: str
+    brief: str
+    tests: str
+
+
+@dataclass
 class EvalSetInfo:
     name: str
     display_name: str
     created_at: Optional[str]
     notes: str
     image_count: int
+    kind: str = "image"  # "image" | "text"
 
 
 def get_sets_dir() -> str:
@@ -68,6 +79,55 @@ def get_set_inputs_dir(set_name: str) -> str:
 
 def _manifest_path(set_name: str) -> str:
     return os.path.join(_get_set_dir(set_name), "manifest.json")
+
+
+def _briefs_path(set_name: str) -> str:
+    return os.path.join(_get_set_dir(set_name), "briefs.json")
+
+
+_BRIEF_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def get_set_kind(set_name: str) -> str:
+    """"text" when the set is a briefs.json collection, else "image"."""
+    if os.path.isfile(_briefs_path(set_name)):
+        return "text"
+    return "image"
+
+
+def list_set_briefs(set_name: str) -> list[EvalSetBrief]:
+    path = _briefs_path(set_name)
+    if not os.path.isfile(path):
+        raise EvalSetNotFoundError(f"Text eval set not found: {set_name}")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            loaded = cast(dict[str, Any], json.load(f))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EvalSetNotFoundError(f"Unreadable briefs.json for {set_name}: {exc}")
+    briefs: list[EvalSetBrief] = []
+    raw_briefs = loaded.get("briefs")
+    entries = (
+        cast(list[object], raw_briefs) if isinstance(raw_briefs, list) else []
+    )
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        record = cast(dict[str, Any], entry)
+        brief_id = str(record.get("id") or "")
+        brief = str(record.get("brief") or "")
+        if not _BRIEF_ID_PATTERN.match(brief_id) or not brief:
+            raise InvalidSetNameError(
+                f"Invalid brief entry in {set_name}: id={brief_id!r}"
+            )
+        briefs.append(
+            EvalSetBrief(
+                id=brief_id,
+                title=str(record.get("title") or brief_id),
+                brief=brief,
+                tests=str(record.get("tests") or ""),
+            )
+        )
+    return briefs
 
 
 def _load_manifest(set_name: str) -> dict[str, Any]:
@@ -181,6 +241,20 @@ def list_set_images(set_name: str) -> list[EvalSetImage]:
 
 
 def get_set(set_name: str) -> EvalSetInfo:
+    if get_set_kind(set_name) == "text":
+        briefs = list_set_briefs(set_name)
+        with open(_briefs_path(set_name), "r", encoding="utf-8") as f:
+            meta = cast(dict[str, Any], json.load(f))
+        return EvalSetInfo(
+            name=set_name,
+            display_name=str(meta.get("display_name") or set_name),
+            created_at=(
+                str(meta["created_at"]) if meta.get("created_at") else None
+            ),
+            notes=str(meta.get("notes") or ""),
+            image_count=len(briefs),
+            kind="text",
+        )
     images = list_set_images(set_name)
     manifest = _load_manifest(set_name)
     return EvalSetInfo(
@@ -191,6 +265,7 @@ def get_set(set_name: str) -> EvalSetInfo:
         ),
         notes=str(manifest.get("notes") or ""),
         image_count=len(images),
+        kind="image",
     )
 
 
@@ -202,7 +277,11 @@ def list_sets() -> list[EvalSetInfo]:
     for entry in sorted(os.listdir(sets_dir)):
         if not _SET_NAME_PATTERN.match(entry):
             continue
-        if not os.path.isdir(os.path.join(sets_dir, entry, "inputs")):
+        set_dir = os.path.join(sets_dir, entry)
+        if not (
+            os.path.isdir(os.path.join(set_dir, "inputs"))
+            or os.path.isfile(os.path.join(set_dir, "briefs.json"))
+        ):
             continue
         infos.append(get_set(entry))
     return infos

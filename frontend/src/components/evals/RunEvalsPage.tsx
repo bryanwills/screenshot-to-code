@@ -128,10 +128,12 @@ function RunEvalsPage() {
         );
         if (!response.ok) throw new Error("Request failed");
         const data = await response.json();
-        setSetImages(data.images);
-        setSelectedSetFiles(
-          data.images.map((image: EvalSetImage) => image.filename)
-        );
+        const items: EvalSetImage[] =
+          data.kind === "text"
+            ? data.briefs.map((b: { id: string }) => ({ filename: b.id }))
+            : data.images;
+        setSetImages(items);
+        setSelectedSetFiles(items.map((item) => item.filename));
       } catch (error) {
         console.error("Error fetching set images", error);
         setSetImages([]);

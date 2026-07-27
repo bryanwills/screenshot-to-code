@@ -22,6 +22,7 @@ class EvalSetSummaryModel(BaseModel):
     created_at: Optional[str]
     notes: str
     image_count: int
+    kind: str = "image"
 
 
 class EvalSetImageModel(BaseModel):
@@ -31,8 +32,16 @@ class EvalSetImageModel(BaseModel):
     tags: List[str]
 
 
+class EvalSetBriefModel(BaseModel):
+    id: str
+    title: str
+    brief: str
+    tests: str
+
+
 class EvalSetDetailModel(EvalSetSummaryModel):
     images: List[EvalSetImageModel]
+    briefs: List[EvalSetBriefModel] = []
 
 
 class EvalSessionModel(BaseModel):
@@ -70,9 +79,11 @@ class MatrixCellModel(BaseModel):
 
 
 class MatrixRowModel(BaseModel):
-    filename: str
-    sha256: str
-    image_url: str
+    filename: str  # image filename, or brief id for text sets
+    sha256: Optional[str] = None
+    image_url: Optional[str] = None
+    title: Optional[str] = None
+    brief: Optional[str] = None
 
 
 class SessionMatrixResponse(BaseModel):
@@ -102,6 +113,7 @@ def _set_info_to_model(info: eval_sets.EvalSetInfo) -> EvalSetSummaryModel:
         created_at=info.created_at,
         notes=info.notes,
         image_count=info.image_count,
+        kind=info.kind,
     )
 
 
@@ -124,6 +136,18 @@ async def list_eval_sets() -> List[EvalSetSummaryModel]:
 async def get_eval_set(set_name: str) -> EvalSetDetailModel:
     try:
         info = eval_sets.get_set(set_name)
+        if info.kind == "text":
+            briefs = eval_sets.list_set_briefs(set_name)
+            return EvalSetDetailModel(
+                **_set_info_to_model(info).model_dump(),
+                images=[],
+                briefs=[
+                    EvalSetBriefModel(
+                        id=b.id, title=b.title, brief=b.brief, tests=b.tests
+                    )
+                    for b in briefs
+                ],
+            )
         images = eval_sets.list_set_images(set_name)
     except eval_sets.InvalidSetNameError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -218,21 +242,32 @@ async def get_session_matrix(session_id: str) -> SessionMatrixResponse:
     set_missing = False
     set_info: Optional[eval_sets.EvalSetInfo] = None
     images: List[eval_sets.EvalSetImage] = []
+    briefs: List[eval_sets.EvalSetBrief] = []
     try:
         set_info = eval_sets.get_set(session.eval_set)
-        images = eval_sets.list_set_images(session.eval_set)
+        if set_info.kind == "text":
+            briefs = eval_sets.list_set_briefs(session.eval_set)
+        else:
+            images = eval_sets.list_set_images(session.eval_set)
     except (eval_sets.EvalSetNotFoundError, eval_sets.InvalidSetNameError):
         set_missing = True
 
-    rows = [
-        MatrixRowModel(
-            filename=image.filename,
-            sha256=image.sha256,
-            image_url=f"/eval-sets/{session.eval_set}/images/{image.filename}",
-        )
-        for image in images
-    ]
-    set_filenames = {image.filename for image in images}
+    if briefs:
+        rows = [
+            MatrixRowModel(filename=b.id, title=b.title, brief=b.brief)
+            for b in briefs
+        ]
+        set_filenames = {b.id for b in briefs}
+    else:
+        rows = [
+            MatrixRowModel(
+                filename=image.filename,
+                sha256=image.sha256,
+                image_url=f"/eval-sets/{session.eval_set}/images/{image.filename}",
+            )
+            for image in images
+        ]
+        set_filenames = {image.filename for image in images}
     filenames_by_sha: Dict[str, List[str]] = {}
     for image in images:
         filenames_by_sha.setdefault(image.sha256, []).append(image.filename)

@@ -41,8 +41,10 @@ interface MatrixCell {
 
 interface MatrixRow {
   filename: string;
-  sha256: string;
-  image_url: string;
+  sha256: string | null;
+  image_url: string | null;
+  title: string | null;
+  brief: string | null;
 }
 
 interface SessionMatrix {
@@ -162,6 +164,8 @@ function EvalSessionsPage() {
   const [newSessionSet, setNewSessionSet] = useState("");
   const [newSessionName, setNewSessionName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [connectionFailed, setConnectionFailed] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
   const [editingNotesModel, setEditingNotesModel] = useState<string | null>(
     null
   );
@@ -202,10 +206,14 @@ function EvalSessionsPage() {
       const response = await fetch(`${HTTP_BACKEND_URL}/eval-sessions`);
       const data = await response.json();
       setSessions(data.sessions);
+      setConnectionFailed(false);
       return data.sessions;
     } catch (error) {
+      // Dev backends restart (--reload) and briefly refuse connections;
+      // flag it and let the retry effect re-attempt instead of settling
+      // into a misleading empty state.
       console.error("Error fetching sessions", error);
-      toast.error("Failed to load sessions.");
+      setConnectionFailed(true);
       return [];
     }
   }, []);
@@ -215,13 +223,31 @@ function EvalSessionsPage() {
       const response = await fetch(`${HTTP_BACKEND_URL}/eval-sets`);
       const data: EvalSetSummary[] = await response.json();
       setSets(data);
+      setConnectionFailed(false);
       if (data.length > 0) {
         setNewSessionSet((current) => current || data[0].name);
       }
     } catch (error) {
       console.error("Error fetching eval sets", error);
+      setConnectionFailed(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (!connectionFailed) return;
+    const timer = window.setTimeout(() => {
+      setRetryTick((n) => n + 1);
+      fetchSets();
+      fetchSessions().then((loaded) => {
+        if (loaded.length > 0 && !selectedSessionId) {
+          const active = loaded.find((s) => s.is_active) ?? loaded[0];
+          loadMatrix(active.session_id);
+        }
+      });
+    }, 2500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionFailed, retryTick]);
 
   const loadMatrix = useCallback(async (sessionId: string) => {
     setSelectedSessionId(sessionId);
@@ -419,7 +445,12 @@ function EvalSessionsPage() {
             <div className="px-2 py-1 text-xs uppercase tracking-wide text-zinc-500">
               {sessions.length} session{sessions.length === 1 ? "" : "s"}
             </div>
-            {sessions.length === 0 && (
+            {connectionFailed && (
+              <p className="px-2 py-4 text-sm text-amber-300">
+                Backend unreachable — retrying…
+              </p>
+            )}
+            {!connectionFailed && sessions.length === 0 && (
               <p className="px-2 py-4 text-sm text-zinc-400">
                 No sessions yet. Pick a set above and start one, or just run
                 evals with a set — a session is created automatically.
@@ -600,26 +631,40 @@ function EvalSessionsPage() {
                         {sortedRows.map((row) => (
                           <tr key={row.filename}>
                             <td className="sticky left-0 z-10 bg-zinc-900/95 px-2 py-1">
-                              <div className="flex items-center gap-2">
-                                <img
-                                  src={`${HTTP_BACKEND_URL}${row.image_url}`}
-                                  alt={row.filename}
-                                  className="h-12 w-16 rounded border border-zinc-800 bg-zinc-800 object-cover"
-                                  loading="lazy"
-                                />
-                                <span className="max-w-[160px] truncate font-mono text-[11px] text-zinc-300">
-                                  {row.filename}
-                                </span>
-                                <a
-                                  href={`${HTTP_BACKEND_URL}${row.image_url}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title="Open image in new tab"
-                                  className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-700 hover:text-zinc-200"
+                              {row.image_url ? (
+                                <div className="flex items-center gap-2">
+                                  <img
+                                    src={`${HTTP_BACKEND_URL}${row.image_url}`}
+                                    alt={row.filename}
+                                    className="h-12 w-16 rounded border border-zinc-800 bg-zinc-800 object-cover"
+                                    loading="lazy"
+                                  />
+                                  <span className="max-w-[160px] truncate font-mono text-[11px] text-zinc-300">
+                                    {row.filename}
+                                  </span>
+                                  <a
+                                    href={`${HTTP_BACKEND_URL}${row.image_url}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title="Open image in new tab"
+                                    className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-700 hover:text-zinc-200"
+                                  >
+                                    <BsBoxArrowUpRight className="text-[11px]" />
+                                  </a>
+                                </div>
+                              ) : (
+                                <div
+                                  className="max-w-[220px]"
+                                  title={row.brief ?? row.filename}
                                 >
-                                  <BsBoxArrowUpRight className="text-[11px]" />
-                                </a>
-                              </div>
+                                  <div className="truncate text-[11px] font-medium text-zinc-200">
+                                    {row.title ?? row.filename}
+                                  </div>
+                                  <div className="line-clamp-2 text-[10px] leading-tight text-zinc-500">
+                                    {row.brief}
+                                  </div>
+                                </div>
+                              )}
                             </td>
                             {matrix.models.map((model) => {
                               const cell = cellsByKey.get(

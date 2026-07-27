@@ -37,8 +37,10 @@ interface MatrixCell {
 
 interface MatrixRow {
   filename: string;
-  sha256: string;
-  image_url: string;
+  sha256: string | null;
+  image_url: string | null;
+  title: string | null;
+  brief: string | null;
 }
 
 interface SessionMatrix {
@@ -80,6 +82,8 @@ function EvalComparePage() {
   const [imageIndex, setImageIndex] = useState(0);
   // 0 = source screenshot, 1..N = selected models in order.
   const [paneIndex, setPaneIndex] = useState(1);
+  const [connectionFailed, setConnectionFailed] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
 
   const sessionId = searchParams.get("session");
 
@@ -130,10 +134,11 @@ function EvalComparePage() {
       const response = await fetch(`${HTTP_BACKEND_URL}/eval-sessions`);
       const data = await response.json();
       setSessions(data.sessions);
+      setConnectionFailed(false);
       return data.sessions as EvalSession[];
     } catch (error) {
       console.error("Error fetching sessions", error);
-      toast.error("Failed to load sessions.");
+      setConnectionFailed(true);
       return [];
     }
   }, []);
@@ -178,6 +183,23 @@ function EvalComparePage() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!connectionFailed) return;
+    const timer = window.setTimeout(() => {
+      setRetryTick((n) => n + 1);
+      fetchSessions().then((loaded) => {
+        if (loaded.length === 0) return;
+        const target =
+          (sessionId && loaded.find((s) => s.session_id === sessionId)) ||
+          loaded.find((s) => s.is_active) ||
+          loaded[0];
+        if (target && !matrix) loadMatrix(target.session_id);
+      });
+    }, 2500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionFailed, retryTick]);
 
   const switchSession = (id: string) => {
     setSearchParams({ session: id }, { replace: true });
@@ -305,7 +327,9 @@ function EvalComparePage() {
               const isActive = index === Math.min(paneIndex, panes.length - 1);
               const label =
                 pane.model === "__source__"
-                  ? "Source"
+                  ? currentImage?.image_url
+                    ? "Source"
+                    : "Brief"
                   : shortModelName(pane.model);
               const colorClass =
                 pane.model === "__source__"
@@ -367,7 +391,9 @@ function EvalComparePage() {
 
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-zinc-800 bg-white">
           {!matrix && (
-            <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
+            <p className="py-8 text-center text-sm text-zinc-500">
+              {connectionFailed ? "Backend unreachable — retrying…" : "Loading…"}
+            </p>
           )}
           {matrix && images.length === 0 && (
             <p className="py-8 text-center text-sm text-zinc-500">
@@ -387,11 +413,25 @@ function EvalComparePage() {
                       isActive ? "visible" : "invisible"
                     }`}
                   >
-                    <img
-                      src={`${HTTP_BACKEND_URL}${currentImage.image_url}`}
-                      alt={currentImage.filename}
-                      className="w-full"
-                    />
+                    {currentImage.image_url ? (
+                      <img
+                        src={`${HTTP_BACKEND_URL}${currentImage.image_url}`}
+                        alt={currentImage.filename}
+                        className="w-full"
+                      />
+                    ) : (
+                      <div className="mx-auto max-w-2xl px-8 py-12 text-zinc-900">
+                        <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                          Brief
+                        </div>
+                        <h2 className="mt-1 text-2xl font-semibold">
+                          {currentImage.title ?? currentImage.filename}
+                        </h2>
+                        <p className="mt-4 text-base leading-7">
+                          {currentImage.brief}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 );
               }

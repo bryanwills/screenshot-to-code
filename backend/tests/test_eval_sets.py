@@ -101,6 +101,102 @@ def test_set_name_validation(evals_dir: Path) -> None:
             get_set_inputs_dir(bad_name)
 
 
+def _make_text_set(evals_dir: Path, name: str) -> None:
+    set_dir = evals_dir / "sets" / name
+    set_dir.mkdir(parents=True)
+    (set_dir / "briefs.json").write_text(
+        json.dumps(
+            {
+                "display_name": "Briefs",
+                "briefs": [
+                    {
+                        "id": "pdp",
+                        "title": "PDP",
+                        "brief": "Build a product page.",
+                        "tests": "hierarchy",
+                    },
+                    {"id": "board", "brief": "Build a kanban board."},
+                ],
+            }
+        )
+    )
+
+
+def test_text_set_kind_and_briefs(evals_dir: Path) -> None:
+    from evals.sets import get_set_kind, list_set_briefs
+
+    _make_text_set(evals_dir, "briefs-v1")
+    _make_set(evals_dir, "imgs", {"a.png": b"a"})
+
+    assert get_set_kind("briefs-v1") == "text"
+    assert get_set_kind("imgs") == "image"
+
+    briefs = list_set_briefs("briefs-v1")
+    assert [(b.id, b.title) for b in briefs] == [("pdp", "PDP"), ("board", "board")]
+
+    info = get_set("briefs-v1")
+    assert info.kind == "text"
+    assert info.image_count == 2
+
+    sets = list_sets()
+    assert {(s.name, s.kind) for s in sets} == {
+        ("briefs-v1", "text"),
+        ("imgs", "image"),
+    }
+
+
+def test_text_set_invalid_brief_id_rejected(evals_dir: Path) -> None:
+    from evals.sets import list_set_briefs
+
+    set_dir = evals_dir / "sets" / "bad"
+    set_dir.mkdir(parents=True)
+    (set_dir / "briefs.json").write_text(
+        json.dumps({"briefs": [{"id": "../evil", "brief": "x"}]})
+    )
+    with pytest.raises(InvalidSetNameError):
+        list_set_briefs("bad")
+
+
+@pytest.mark.asyncio
+async def test_text_set_runner_flow(
+    evals_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from evals.runner import count_pending_eval_tasks, run_image_evals
+
+    _make_text_set(evals_dir, "briefs-v1")
+
+    captured: list[dict[str, object]] = []
+
+    async def fake_text_gen(**kwargs: object) -> str:
+        captured.append(kwargs)
+        return "<html>text output</html>"
+
+    monkeypatch.setattr("evals.runner.generate_code_for_text", fake_text_gen)
+
+    pending, skipped = count_pending_eval_tasks(
+        stack="html_tailwind",
+        model="gpt-5.5 (high thinking)",
+        diff_mode=True,
+        eval_set="briefs-v1",
+        skip_input_files={"pdp"},
+    )
+    assert (pending, skipped) == (1, 1)
+
+    outputs = await run_image_evals(
+        stack="html_tailwind",
+        model="gpt-5.5 (high thinking)",
+        eval_set="briefs-v1",
+        eval_session_id="sess_x",
+        diff_mode=True,
+        skip_input_files={"pdp"},
+    )
+    assert outputs == ["board_0.html"]
+    assert len(captured) == 1
+    assert captured[0]["text_prompt"] == "Build a kanban board."
+    assert captured[0]["input_file"] == "board"
+    assert captured[0]["eval_session_id"] == "sess_x"
+
+
 @pytest.mark.asyncio
 async def test_image_path_resolution_and_route_guards(evals_dir: Path) -> None:
     _make_set(evals_dir, "s1", {"a.png": b"png-bytes"})
