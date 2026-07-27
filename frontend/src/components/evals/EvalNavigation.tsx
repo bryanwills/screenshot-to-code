@@ -54,6 +54,13 @@ function EvalNavigation() {
         >
           Sessions
         </Link>
+
+        <Link
+          to="/evals/compare"
+          className="hover:text-blue-300 transition-colors"
+        >
+          Compare
+        </Link>
       </div>
       
       <Link
